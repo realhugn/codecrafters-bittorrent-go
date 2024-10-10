@@ -11,6 +11,8 @@ type TorrentInfo struct {
 	AnnounceURL string
 	Length      int64
 	InfoHash    string
+	PieceLength int64
+	Pieces      []string
 }
 
 type TorrentParser struct {
@@ -56,10 +58,26 @@ func (tp *TorrentParser) ParseFile(filename string) (*TorrentInfo, error) {
 		return nil, fmt.Errorf("missing or invalid file length")
 	}
 
+	pieces, ok := info["pieces"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid pieces")
+	}
+
+	var piece_list []string
+	for i := 0; i < len(pieces); i += 20 {
+		piece_list = append(piece_list, hex.EncodeToString([]byte(pieces[i:i+20])))
+	}
+
+	pieceLength, ok := info["piece length"].(int64)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid piece length")
+	}
 	return &TorrentInfo{
 		AnnounceURL: announce,
 		Length:      length,
 		InfoHash:    tp.calculateInfoHash(info),
+		PieceLength: pieceLength,
+		Pieces:      piece_list,
 	}, nil
 }
 

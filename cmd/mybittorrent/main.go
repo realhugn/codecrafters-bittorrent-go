@@ -15,27 +15,61 @@ var _ = json.Marshal
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
+func benDecodeString(s string) (int, int, error) {
+	var firstColonIndex int
+
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			firstColonIndex = i
+			break
+		}
+	}
+
+	lengthStr := s[:firstColonIndex]
+
+	lenth, err := strconv.Atoi(lengthStr)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return firstColonIndex + 1, firstColonIndex + 1 + lenth, nil
+}
+
+func benDecodeInt(s string) (int, int, error) {
+	var endIndex int
+
+	for i := 0; i < len(s); i++ {
+		if s[i] == 'e' {
+			endIndex = i
+			break
+		}
+	}
+
+	return 1, endIndex, nil
+}
+
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
-		var firstColonIndex int
-
-		for i := 0; i < len(bencodedString); i++ {
-			if bencodedString[i] == ':' {
-				firstColonIndex = i
-				break
+		firstColonIndex, endIndex, _ := benDecodeString(bencodedString)
+		return bencodedString[firstColonIndex:endIndex], nil
+	} else if rune(bencodedString[0]) == 'i' {
+		firstColonIndex, endIndex, _ := benDecodeInt(bencodedString)
+		return strconv.Atoi(bencodedString[firstColonIndex:endIndex])
+	} else if rune(bencodedString[0]) == 'l' {
+		var encodeList []interface{}
+		for i := 1; i < len(bencodedString); i++ {
+			if unicode.IsDigit(rune(bencodedString[i])) {
+				firstColonIndex, endIndex, _ := benDecodeString(bencodedString[i:])
+				encodeList = append(encodeList, bencodedString[i+firstColonIndex:i+endIndex])
+				i = i + endIndex - 1
+			} else if rune(bencodedString[i]) == 'i' {
+				firstColonIndex, endIndex, _ := benDecodeInt(bencodedString[i:])
+				decoded, _ := strconv.Atoi(bencodedString[i+firstColonIndex : i+endIndex])
+				encodeList = append(encodeList, decoded)
+				i = i + endIndex - 1
 			}
 		}
-
-		lengthStr := bencodedString[:firstColonIndex]
-
-		length, err := strconv.Atoi(lengthStr)
-		if err != nil {
-			return "", err
-		}
-
-		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
-	} else if rune(bencodedString[0]) == 'i' {
-		return strconv.Atoi(bencodedString[1 : len(bencodedString)-1])
+		return encodeList, nil
 	} else {
 		return nil, fmt.Errorf("unsupported bencode type")
 	}

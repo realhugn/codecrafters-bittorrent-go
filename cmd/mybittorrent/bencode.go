@@ -8,6 +8,56 @@ import (
 
 type BencodeDecoder struct{}
 
+type BencodeEncoder struct{}
+
+func NewBencodeEncoder() *BencodeEncoder {
+	return &BencodeEncoder{}
+}
+
+func (be *BencodeEncoder) encodeString(s string) string {
+	return fmt.Sprintf("%d:%s", len(s), s)
+}
+
+func (be *BencodeEncoder) encodeInt(i int64) string {
+	return fmt.Sprintf("i%de", i)
+}
+
+func (be *BencodeEncoder) encodeList(l []interface{}) string {
+	var encoded string
+	for _, item := range l {
+		encoded += be.Encode(item)
+	}
+	return "l" + encoded + "e"
+}
+
+func (be *BencodeEncoder) encodeDict(d map[string]interface{}) string {
+	var encoded string
+	keys := make([]string, 0, len(d))
+	for key := range d {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		encoded += be.encodeString(key) + be.Encode(d[key])
+	}
+	return "d" + encoded + "e"
+}
+
+func (be *BencodeEncoder) Encode(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return be.encodeString(val)
+	case int64:
+		return be.encodeInt(val)
+	case []interface{}:
+		return be.encodeList(val)
+	case map[string]interface{}:
+		return be.encodeDict(val)
+	default:
+		return ""
+	}
+}
+
 func NewBencodeDecoder() *BencodeDecoder {
 	return &BencodeDecoder{}
 }

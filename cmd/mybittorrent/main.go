@@ -36,6 +36,7 @@ func main() {
 
 		fmt.Printf("Tracker URL: %s\n", info.AnnounceURL)
 		fmt.Printf("Length: %d\n", info.Length)
+		fmt.Printf("Info Hash: %s\n", info.InfoHash)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)

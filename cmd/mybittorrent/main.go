@@ -48,6 +48,23 @@ func benDecodeInt(s string) (int, int, error) {
 	return 1, endIndex, nil
 }
 
+func benDecodeList(s string) (int, error) {
+	var endIndex int
+	var count int
+	for i := 0; i < len(s); i++ {
+		if s[i] == 'l' || s[i] == 'i' {
+			count++
+		} else if s[i] == 'e' {
+			count--
+			if count == 0 {
+				endIndex = i
+				break
+			}
+		}
+	}
+	return endIndex, nil
+}
+
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		firstColonIndex, endIndex, _ := benDecodeString(bencodedString)
@@ -67,6 +84,11 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 				decoded, _ := strconv.Atoi(bencodedString[i+firstColonIndex : i+endIndex])
 				encodeList = append(encodeList, decoded)
 				i = i + endIndex - 1
+			} else if rune(bencodedString[i]) == 'l' {
+				endIndex, _ := benDecodeList(bencodedString[i:])
+				decoded, _ := decodeBencode(bencodedString[i : i+endIndex])
+				encodeList = append(encodeList, decoded)
+				i = i + len(bencodedString[i:]) - 1
 			}
 		}
 		return encodeList, nil

@@ -15,85 +15,84 @@ var _ = json.Marshal
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
-func benDecodeString(s string) (int, int, error) {
-	var firstColonIndex int
-
-	for i := 0; i < len(s); i++ {
-		if s[i] == ':' {
-			firstColonIndex = i
+func benDecodeString(s string) (string, int, error) {
+	colonIndex := -1
+	for i, ch := range s {
+		if ch == ':' {
+			colonIndex = i
 			break
 		}
 	}
+	if colonIndex == -1 {
+		return "", 0, fmt.Errorf("invalid string format")
+	}
 
-	lengthStr := s[:firstColonIndex]
-
-	lenth, err := strconv.Atoi(lengthStr)
+	length, err := strconv.Atoi(s[:colonIndex])
 	if err != nil {
-		return 0, 0, err
+		return "", 0, fmt.Errorf("invalid string length: %v", err)
 	}
 
-	return firstColonIndex + 1, firstColonIndex + 1 + lenth, nil
+	endIndex := colonIndex + 1 + length
+	if endIndex > len(s) {
+		return "", 0, fmt.Errorf("string length exceeds input")
+	}
+
+	return s[colonIndex+1 : endIndex], endIndex, nil
 }
 
-func benDecodeInt(s string) (int, int, error) {
-	var endIndex int
+func benDecodeInt(s string) (int64, int, error) {
+	if s[0] != 'i' {
+		return 0, 0, fmt.Errorf("invalid integer format")
+	}
 
-	for i := 0; i < len(s); i++ {
-		if s[i] == 'e' {
-			endIndex = i
+	endIndex := -1
+	for i, ch := range s[1:] {
+		if ch == 'e' {
+			endIndex = i + 1
 			break
 		}
 	}
-
-	return 1, endIndex, nil
-}
-
-func benDecodeList(s string) (int, error) {
-	var endIndex int
-	var count int
-	for i := 0; i < len(s); i++ {
-		if s[i] == 'l' || s[i] == 'i' {
-			count++
-		} else if s[i] == 'e' {
-			count--
-			if count == 0 {
-				endIndex = i
-				break
-			}
-		}
+	if endIndex == -1 {
+		return 0, 0, fmt.Errorf("invalid integer format: no ending 'e'")
 	}
-	return endIndex, nil
+
+	num, err := strconv.ParseInt(s[1:endIndex], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid integer: %v", err)
+	}
+
+	return num, endIndex + 1, nil
 }
 
-func decodeBencode(bencodedString string) (interface{}, error) {
-	if unicode.IsDigit(rune(bencodedString[0])) {
-		firstColonIndex, endIndex, _ := benDecodeString(bencodedString)
-		return bencodedString[firstColonIndex:endIndex], nil
-	} else if rune(bencodedString[0]) == 'i' {
-		firstColonIndex, endIndex, _ := benDecodeInt(bencodedString)
-		return strconv.Atoi(bencodedString[firstColonIndex:endIndex])
-	} else if rune(bencodedString[0]) == 'l' {
-		var encodeList = make([]interface{}, 0)
-		for i := 1; i < len(bencodedString); i++ {
-			if unicode.IsDigit(rune(bencodedString[i])) {
-				firstColonIndex, endIndex, _ := benDecodeString(bencodedString[i:])
-				encodeList = append(encodeList, bencodedString[i+firstColonIndex:i+endIndex])
-				i = i + endIndex - 1
-			} else if rune(bencodedString[i]) == 'i' {
-				firstColonIndex, endIndex, _ := benDecodeInt(bencodedString[i:])
-				decoded, _ := strconv.Atoi(bencodedString[i+firstColonIndex : i+endIndex])
-				encodeList = append(encodeList, decoded)
-				i = i + endIndex - 1
-			} else if rune(bencodedString[i]) == 'l' {
-				endIndex, _ := benDecodeList(bencodedString[i:])
-				decoded, _ := decodeBencode(bencodedString[i : i+endIndex])
-				encodeList = append(encodeList, decoded)
-				i = i + len(bencodedString[i:]) - 1
+func decodeBencode(s string) (interface{}, int, error) {
+	if len(s) == 0 {
+		return nil, 0, fmt.Errorf("empty input")
+	}
+
+	switch {
+	case unicode.IsDigit(rune(s[0])):
+		str, n, err := benDecodeString(s)
+		return str, n, err
+	case s[0] == 'i':
+		num, n, err := benDecodeInt(s)
+		return num, n, err
+	case s[0] == 'l':
+		var list = make([]interface{}, 0)
+		i := 1
+		for i < len(s) && s[i] != 'e' {
+			item, n, err := decodeBencode(s[i:])
+			if err != nil {
+				return nil, 0, err
 			}
+			list = append(list, item)
+			i += n
 		}
-		return encodeList, nil
-	} else {
-		return nil, fmt.Errorf("unsupported bencode type")
+		if i >= len(s) || s[i] != 'e' {
+			return nil, 0, fmt.Errorf("invalid list: no ending 'e'")
+		}
+		return list, i + 1, nil
+	default:
+		return nil, 0, fmt.Errorf("unsupported bencode type")
 	}
 }
 
@@ -108,7 +107,7 @@ func main() {
 
 		bencodedValue := os.Args[2]
 
-		decoded, err := decodeBencode(bencodedValue)
+		decoded, _, err := decodeBencode(bencodedValue)
 		if err != nil {
 			fmt.Println(err)
 			return

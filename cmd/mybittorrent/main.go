@@ -56,7 +56,7 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 		firstColonIndex, endIndex, _ := benDecodeInt(bencodedString)
 		return strconv.Atoi(bencodedString[firstColonIndex:endIndex])
 	} else if rune(bencodedString[0]) == 'l' {
-		var encodeList []interface{}
+		var encodeList = make([]interface{}, 0)
 		for i := 1; i < len(bencodedString); i++ {
 			if unicode.IsDigit(rune(bencodedString[i])) {
 				firstColonIndex, endIndex, _ := benDecodeString(bencodedString[i:])

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 const BLOCK_SIZE = 16 * 1024 // 16 KiB
@@ -132,15 +133,15 @@ func (tc *TorrentClient) Handshake(peer string, infoHash string) ([]byte, net.Co
 	return reservedPeerId, conn, nil
 }
 
-func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte, outputFile string, pieceNumber int) error {
+func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte, outputFile string, pieceNumber int) ([]byte, error) {
 	peers, err := tc.GetPeers(&torrentInfo)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return err
+		return nil, err
 	}
 
 	if len(peers) == 0 {
-		return fmt.Errorf("no peers found")
+		return nil, fmt.Errorf("no peers found")
 	}
 
 	peer := peers[0]
@@ -150,7 +151,7 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 	_, conn, err := tc.Handshake(peerAddr, torrentInfo.InfoHash)
 	if err != nil {
 		fmt.Println("Error sending handshake message:", err)
-		return err
+		return nil, err
 	}
 
 	// Wait for bitfield message
@@ -159,10 +160,10 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 	bitFieldMsg, err := readMessage(conn)
 	if err != nil {
 		fmt.Println("Error reading bitfield message:", err)
-		return err
+		return nil, err
 	}
 	if bitFieldMsg.id != 5 {
-		return fmt.Errorf("unexpected message ID: %d", bitFieldMsg.id)
+		return nil, fmt.Errorf("unexpected message ID: %d", bitFieldMsg.id)
 	}
 
 	// Send interested message
@@ -171,7 +172,7 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 	err = sendMessage(conn, 2, nil)
 	if err != nil {
 		fmt.Println("Error sending interested message:", err)
-		return err
+		return nil, err
 	}
 
 	// Wait unchoke message
@@ -180,11 +181,11 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 	unchokeMsg, err := readMessage(conn)
 	if err != nil {
 		fmt.Println("Error reading piece message:", err)
-		return err
+		return nil, err
 	}
 
 	if unchokeMsg.id != 1 {
-		return fmt.Errorf("unexpected message ID: %d", unchokeMsg.id)
+		return nil, fmt.Errorf("unexpected message ID: %d", unchokeMsg.id)
 	}
 
 	// Request piece
@@ -222,11 +223,11 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 		msg, err := readMessage(conn)
 		if err != nil {
 			fmt.Println("Error reading piece message:", err)
-			return err
+			return nil, err
 		}
 
 		if msg.id != 7 {
-			return fmt.Errorf("unexpected message ID: %d", msg.id)
+			return nil, fmt.Errorf("unexpected message ID: %d", msg.id)
 		}
 		begin := binary.BigEndian.Uint32(msg.payload[4:8])
 		block := msg.payload[8:]
@@ -239,17 +240,17 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 	fmt.Println("Expected hash:", expectedHash)
 	fmt.Println("Actual hash:", hex.EncodeToString(hash[:]))
 	if hex.EncodeToString(hash[:]) != expectedHash {
-		return fmt.Errorf("piece hash mismatch")
+		return nil, fmt.Errorf("piece hash mismatch")
 	}
 
 	err = os.WriteFile(outputFile, piece, 0644)
 	if err != nil {
 		fmt.Println("Error writing piece to file:", err)
-		return err
+		return nil, err
 	}
 
 	fmt.Println("Piece downloaded successfully")
-	return nil
+	return piece, nil
 }
 
 type Message struct {
@@ -295,4 +296,71 @@ func sendMessage(conn net.Conn, id uint8, payload []byte) error {
 
 	_, err := conn.Write(buf)
 	return err
+}
+
+func (tc *TorrentClient) Download(torrentFile string, outputDir string) error {
+	parser := NewTorrentParser()
+	info, err := parser.ParseFile(torrentFile)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	peers, err := tc.GetPeers(info)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	if len(peers) == 0 {
+		return fmt.Errorf("no peers found")
+	}
+
+	numPeers := len(info.Pieces)
+	fmt.Println("Number of pieces:", numPeers)
+	pieces := make([][]byte, numPeers)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10)
+
+	for i := 0; i < numPeers; i++ {
+		wg.Add(1)
+		go func(i int, info *TorrentInfo) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			piece, err := tc.DownloadPiece(*info, []byte(info.InfoHash), outputDir, i)
+			if err != nil {
+				fmt.Println("Error downloading piece:", err)
+				return
+			}
+
+			if piece != nil {
+				pieces[i] = piece
+				fmt.Println("Piece downloaded successfully")
+			} else {
+				fmt.Println("Error downloading piece:", err)
+			}
+		}(i, info)
+	}
+
+	wg.Wait()
+
+	file, err := os.Create(outputDir)
+	if err != nil {
+		fmt.Println("Error creating file:", err)
+		return err
+	}
+	defer file.Close()
+
+	for _, piece := range pieces {
+		_, err = file.Write(piece)
+		if err != nil {
+			fmt.Println("Error writing piece to file:", err)
+			return err
+		}
+	}
+
+	fmt.Println("File downloaded successfully")
+	return nil
 }

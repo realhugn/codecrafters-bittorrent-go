@@ -100,7 +100,21 @@ func main() {
 			os.Exit(1)
 		}
 
-		err = client.DownloadPiece(*info, []byte(info.InfoHash), outputFile, pieceNumber)
+		_, err = client.DownloadPiece(*info, []byte(info.InfoHash), outputFile, pieceNumber)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+	} else if command == "download" {
+		if len(os.Args) != 5 || os.Args[2] != "-o" {
+			fmt.Println("Usage: ./your_bittorrent download -o <output-dir> <torrent-file>")
+			os.Exit(1)
+		}
+
+		outputDir := os.Args[3]
+		torrentFile := os.Args[4]
+		client := torrent.NewTorrentClient()
+		err := client.Download(torrentFile, outputDir)
 		if err != nil {
 			fmt.Println("Error:", err)
 			os.Exit(1)

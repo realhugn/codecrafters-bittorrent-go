@@ -1,4 +1,4 @@
-package main
+package bencode
 
 import (
 	"fmt"
@@ -154,11 +154,7 @@ func (bd *BencodeDecoder) decodeDict(s string) (map[string]interface{}, int, err
 		return nil, 0, fmt.Errorf("invalid dictionary: no ending 'e'")
 	}
 
-	// Check if keys are sorted
-	if !sort.StringsAreSorted(keys) {
-		return nil, 0, fmt.Errorf("invalid dictionary: keys are not sorted")
-	}
-
+	sort.Strings(keys)
 	return dict, i + 1, nil
 }
 

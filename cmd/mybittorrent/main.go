@@ -42,6 +42,24 @@ func main() {
 		for _, piece := range info.Pieces {
 			fmt.Println(piece)
 		}
+	} else if command == "peers" {
+		torrentFile := os.Args[2]
+		parser := NewTorrentParser()
+		info, err := parser.ParseFile(torrentFile)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+
+		peers, err := parser.GetPeers(info)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+
+		for _, peer := range peers {
+			fmt.Printf("%s:%d\n", peer.IP, peer.Port)
+		}
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)

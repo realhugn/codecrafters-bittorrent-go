@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/torrent"
@@ -76,12 +77,34 @@ func main() {
 
 		peerAddr := os.Args[3]
 
-		peerId, err := client.Handshake(peerAddr, info.InfoHash)
+		peerId, conn, err := client.Handshake(peerAddr, info.InfoHash)
+		defer conn.Close()
 		if err != nil {
 			fmt.Println("Error:", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Peer ID: %x\n", peerId)
+	} else if command == "download_piece" {
+		if len(os.Args) != 6 || os.Args[2] != "-o" {
+			fmt.Println("Usage: ./your_bittorrent download_piece -o <output-file> <torrent-file> <piece-number>")
+			os.Exit(1)
+		}
+		outputFile := os.Args[3]
+		torrentFile := os.Args[4]
+		pieceNumber, _ := strconv.Atoi(os.Args[5])
+		parser := torrent.NewTorrentParser()
+		client := torrent.NewTorrentClient()
+		info, err := parser.ParseFile(torrentFile)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+
+		err = client.DownloadPiece(*info, []byte(info.InfoHash), outputFile, pieceNumber)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)

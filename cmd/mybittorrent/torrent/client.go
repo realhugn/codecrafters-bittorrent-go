@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -9,8 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
+
+const BLOCK_SIZE = 16 * 1024 // 16 KiB
 
 type TorrentClient struct{}
 
@@ -91,12 +95,11 @@ func (tc *TorrentClient) parsePeers(peers string) ([]Peer, error) {
 	return peerList, nil
 }
 
-func (tc *TorrentClient) Handshake(peer string, infoHash string) ([]byte, error) {
+func (tc *TorrentClient) Handshake(peer string, infoHash string) ([]byte, net.Conn, error) {
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
-		return nil, fmt.Errorf("error connecting to peer: %v", err)
+		return nil, nil, fmt.Errorf("error connecting to peer: %v", err)
 	}
-	defer conn.Close()
 	// Construct handshake message
 	pstrlen := byte(19)
 	pstr := []byte("BitTorrent protocol")
@@ -112,19 +115,184 @@ func (tc *TorrentClient) Handshake(peer string, infoHash string) ([]byte, error)
 	handshake = append(handshake, peerId...)
 	_, err = conn.Write(handshake)
 	if err != nil {
-		return nil, fmt.Errorf("error sending handshake message: %v", err)
+		return nil, nil, fmt.Errorf("error sending handshake message: %v", err)
 	}
 
 	response := make([]byte, 68)
 	_, err = conn.Read(response)
 	if err != nil {
-		return nil, fmt.Errorf("error reading handshake response: %v", err)
+		return nil, nil, fmt.Errorf("error reading handshake response: %v", err)
 	}
 
 	if !strings.HasPrefix(string(response[1:20]), "BitTorrent protocol") {
-		return nil, fmt.Errorf("invalid handshake response")
+		return nil, nil, fmt.Errorf("invalid handshake response")
 	}
 
 	reservedPeerId := response[48:68]
-	return reservedPeerId, nil
+	return reservedPeerId, conn, nil
+}
+
+func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte, outputFile string, pieceNumber int) error {
+	peers, err := tc.GetPeers(&torrentInfo)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	if len(peers) == 0 {
+		return fmt.Errorf("no peers found")
+	}
+
+	peer := peers[0]
+	peerAddr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
+
+	// Send handshake message0
+	_, conn, err := tc.Handshake(peerAddr, torrentInfo.InfoHash)
+	if err != nil {
+		fmt.Println("Error sending handshake message:", err)
+		return err
+	}
+
+	// Wait for bitfield message
+	// The message id for bitfield is 5
+	// The payload is a bitfield indicating which pieces the peer has
+	bitFieldMsg, err := readMessage(conn)
+	if err != nil {
+		fmt.Println("Error reading bitfield message:", err)
+		return err
+	}
+	if bitFieldMsg.id != 5 {
+		return fmt.Errorf("unexpected message ID: %d", bitFieldMsg.id)
+	}
+
+	// Send interested message
+	// The message id for interested is 2
+	// The payload is empty
+	err = sendMessage(conn, 2, nil)
+	if err != nil {
+		fmt.Println("Error sending interested message:", err)
+		return err
+	}
+
+	// Wait unchoke message
+	// The message id for unchoke is 1
+	// The payload is empty
+	unchokeMsg, err := readMessage(conn)
+	if err != nil {
+		fmt.Println("Error reading piece message:", err)
+		return err
+	}
+
+	if unchokeMsg.id != 1 {
+		return fmt.Errorf("unexpected message ID: %d", unchokeMsg.id)
+	}
+
+	// Request piece
+	pieceLength := torrentInfo.PieceLength
+	fmt.Println("Piece length:", pieceLength)
+	if pieceNumber == len(torrentInfo.Pieces)-1 {
+		pieceLength = torrentInfo.Length % torrentInfo.PieceLength
+	}
+	fmt.Println("Piece length:", pieceLength)
+
+	piece := make([]byte, pieceLength)
+	// Break the piece into blocks of 16 KiB
+	for offset := 0; offset < int(pieceLength); offset += BLOCK_SIZE {
+		length := BLOCK_SIZE
+		if offset+length > int(pieceLength) {
+			length = int(pieceLength) - offset
+		}
+
+		// Send request message
+		// payload is a 12-byte message with the following format:
+		// - piece index (4 bytes)
+		// - block offset (4 bytes)
+		// - block length (4 bytes)
+		payload := make([]byte, 12)
+		binary.BigEndian.PutUint32(payload[0:4], uint32(pieceNumber))
+		binary.BigEndian.PutUint32(payload[4:8], uint32(offset))
+		binary.BigEndian.PutUint32(payload[8:12], uint32(length))
+		sendMessage(conn, 6, payload)
+
+		// Wait for piece message
+		// The message id for piece is 7
+		// The payload message with the following format:
+		// - piece index (4 bytes)
+		// - block offset (4 bytes)
+		msg, err := readMessage(conn)
+		if err != nil {
+			fmt.Println("Error reading piece message:", err)
+			return err
+		}
+
+		if msg.id != 7 {
+			return fmt.Errorf("unexpected message ID: %d", msg.id)
+		}
+		begin := binary.BigEndian.Uint32(msg.payload[4:8])
+		block := msg.payload[8:]
+		copy(piece[begin:], block)
+	}
+
+	//verify piece
+	hash := sha1.Sum(piece)
+	expectedHash := torrentInfo.Pieces[pieceNumber]
+	fmt.Println("Expected hash:", expectedHash)
+	fmt.Println("Actual hash:", hex.EncodeToString(hash[:]))
+	if hex.EncodeToString(hash[:]) != expectedHash {
+		return fmt.Errorf("piece hash mismatch")
+	}
+
+	err = os.WriteFile(outputFile, piece, 0644)
+	if err != nil {
+		fmt.Println("Error writing piece to file:", err)
+		return err
+	}
+
+	fmt.Println("Piece downloaded successfully")
+	return nil
+}
+
+type Message struct {
+	length  uint32
+	id      uint8
+	payload []byte
+}
+
+func readMessage(conn net.Conn) (Message, error) {
+	lengthBuf := make([]byte, 4)
+	_, err := io.ReadFull(conn, lengthBuf)
+	if err != nil {
+		fmt.Println("Error reading message length:", err)
+		return Message{}, err
+	}
+
+	length := binary.BigEndian.Uint32(lengthBuf)
+	if length == 0 {
+		fmt.Println("Received keep-alive message")
+		return Message{length: 0}, nil
+	}
+
+	messageBuf := make([]byte, length)
+	_, err = io.ReadFull(conn, messageBuf)
+	if err != nil {
+		fmt.Println("Error reading message:", err)
+		return Message{}, err
+	}
+
+	return Message{
+		length:  length,
+		id:      messageBuf[0],
+		payload: messageBuf[1:],
+	}, nil
+}
+
+func sendMessage(conn net.Conn, id uint8, payload []byte) error {
+	length := uint32(len(payload) + 1)
+	buf := make([]byte, 4+length)
+	binary.BigEndian.PutUint32(buf[0:4], length)
+	buf[4] = id
+	copy(buf[5:], payload)
+
+	_, err := conn.Write(buf)
+	return err
 }

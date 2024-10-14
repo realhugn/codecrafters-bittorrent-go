@@ -317,7 +317,7 @@ func (tc *TorrentClient) Download(torrentFile string, outputDir string) error {
 	fmt.Println("Number of pieces:", numPeers)
 	pieces := make([][]byte, numPeers)
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, 5)
 
 	for i := 0; i < numPeers; i++ {
 		wg.Add(1)

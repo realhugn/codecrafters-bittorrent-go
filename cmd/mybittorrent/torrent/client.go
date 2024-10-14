@@ -190,11 +190,9 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 
 	// Request piece
 	pieceLength := torrentInfo.PieceLength
-	fmt.Println("Piece length:", pieceLength)
 	if pieceNumber == len(torrentInfo.Pieces)-1 {
 		pieceLength = torrentInfo.Length % torrentInfo.PieceLength
 	}
-	fmt.Println("Piece length:", pieceLength)
 
 	piece := make([]byte, pieceLength)
 	// Break the piece into blocks of 16 KiB
@@ -249,7 +247,6 @@ func (tc *TorrentClient) DownloadPiece(torrentInfo TorrentInfo, infoHash []byte,
 		return nil, err
 	}
 
-	fmt.Println("Piece downloaded successfully")
 	return piece, nil
 }
 
@@ -337,7 +334,7 @@ func (tc *TorrentClient) Download(torrentFile string, outputDir string) error {
 
 			if piece != nil {
 				pieces[i] = piece
-				fmt.Println("Piece downloaded successfully")
+				fmt.Printf("Piece %d downloaded successfully\n", i)
 			} else {
 				fmt.Println("Error downloading piece:", err)
 			}
